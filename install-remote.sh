@@ -15,7 +15,7 @@ set -euo pipefail
 
 ZEROMD_HOME="$HOME/.zeromd"
 ZEROMD_REPO="$ZEROMD_HOME/zeromd"
-REPO_URL="https://github.com/yuukiLike/zeromd.git"
+REPO_URL="https://github.com/TsingWei/zeromd.git"
 
 echo "zeromd installer"
 echo ""

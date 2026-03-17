@@ -15,8 +15,10 @@
 
 set -uo pipefail
 
+OS="$(uname -s)"
 PLIST_TARGET="$HOME/Library/LaunchAgents/com.zeromd.sync.plist"
 CONFIG_DIR="$HOME/.zeromd"
+SYNC_SCRIPT="$(cd "$(dirname "$0")" && pwd)/sync.sh"
 VAULT_PATH_FILE="$CONFIG_DIR/vault-path"
 
 # 在删除配置之前，先把 vault 路径读出来，后面第 3 步要用
@@ -33,15 +35,25 @@ echo ""
 # =========================================================================
 # 第 1 步：停止并移除定时任务
 # =========================================================================
-# 必须先 unload 再删文件
-# 如果只删文件不 unload，任务会继续运行直到重启
-if [ -f "$PLIST_TARGET" ]; then
-    echo "停止定时同步任务..."
-    launchctl unload "$PLIST_TARGET" 2>/dev/null || true
-    rm "$PLIST_TARGET"
-    echo "已停止并移除定时任务。"
+if [ "$OS" = "Darwin" ]; then
+    # macOS: launchd
+    if [ -f "$PLIST_TARGET" ]; then
+        echo "停止定时同步任务..."
+        launchctl unload "$PLIST_TARGET" 2>/dev/null || true
+        rm "$PLIST_TARGET"
+        echo "已停止并移除定时任务。"
+    else
+        echo "定时任务不存在，跳过。"
+    fi
 else
-    echo "定时任务不存在，跳过。"
+    # Linux: cron
+    if crontab -l 2>/dev/null | grep -qF "$SYNC_SCRIPT"; then
+        echo "移除 cron 定时任务..."
+        crontab -l 2>/dev/null | grep -vF "$SYNC_SCRIPT" | crontab -
+        echo "已移除 cron 任务。"
+    else
+        echo "cron 任务不存在，跳过。"
+    fi
 fi
 
 # =========================================================================

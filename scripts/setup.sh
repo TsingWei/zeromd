@@ -29,6 +29,16 @@ LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 STATE_DIR="$HOME/.zeromd"
 ICLOUD_OBSIDIAN="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents"
 
+# ---------- OS 检测 ----------
+OS="$(uname -s)"
+IS_MACOS=false
+IS_LINUX=false
+case "$OS" in
+    Darwin) IS_MACOS=true ;;
+    Linux)  IS_LINUX=true ;;
+    *) echo "Unsupported OS: $OS"; exit 1 ;;
+esac
+
 # ---------- 输出工具 ----------
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -86,8 +96,13 @@ phase 0 "Pre-flight checks"
 if ! command -v git &>/dev/null; then
     fail "git not found"
     echo ""
-    echo "  Install Xcode Command Line Tools:"
-    echo "    xcode-select --install"
+    if $IS_MACOS; then
+        echo "  Install Xcode Command Line Tools:"
+        echo "    xcode-select --install"
+    else
+        echo "  Install git:"
+        echo "    sudo apt install git"
+    fi
     exit 1
 fi
 ok "git available"
@@ -96,28 +111,23 @@ ok "git available"
 if [ -f "$HOME/.ssh/id_ed25519" ] || [ -f "$HOME/.ssh/id_rsa" ] || [ -f "$HOME/.ssh/id_ecdsa" ]; then
     ok "SSH key found"
 else
-    fail "No SSH key found (~/.ssh/id_ed25519 or id_rsa)"
-    echo ""
-    echo "  Generate one:"
-    echo "    ssh-keygen -t ed25519 -C \"your-email@example.com\""
-    echo ""
-    echo "  Add it to your Git server account (SSH keys page)."
-    echo ""
-    echo "  Then re-run this installer."
-    exit 1
+    warn "No SSH key found (optional if using HTTPS remote)"
+    echo "  To generate one: ssh-keygen -t ed25519 -C \"your-email@example.com\""
 fi
 
-# iCloud Obsidian directory
-if [ ! -d "$ICLOUD_OBSIDIAN" ]; then
-    fail "iCloud Obsidian directory not found"
-    echo ""
-    echo "  Expected: $ICLOUD_OBSIDIAN"
-    echo ""
-    echo "  Fix: Open Obsidian → Create new vault → Storage: iCloud"
-    echo "  Then re-run this installer."
-    exit 1
+# iCloud Obsidian directory (macOS only)
+if $IS_MACOS; then
+    if [ ! -d "$ICLOUD_OBSIDIAN" ]; then
+        fail "iCloud Obsidian directory not found"
+        echo ""
+        echo "  Expected: $ICLOUD_OBSIDIAN"
+        echo ""
+        echo "  Fix: Open Obsidian → Create new vault → Storage: iCloud"
+        echo "  Then re-run this installer."
+        exit 1
+    fi
+    ok "iCloud Obsidian directory found"
 fi
-ok "iCloud Obsidian directory found"
 
 # =========================================================================
 # Phase 1: Vault discovery
@@ -136,42 +146,51 @@ if [ -f "$STATE_DIR/vault-path" ]; then
 fi
 
 if [ -z "$VAULT_DIR" ]; then
-    # Scan for vaults
-    vaults=()
-    while IFS= read -r -d '' dir; do
-        name="$(basename "$dir")"
-        # Skip hidden directories
-        [[ "$name" == .* ]] && continue
-        vaults+=("$dir")
-    done < <(find "$ICLOUD_OBSIDIAN" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | sort -z)
+    if $IS_MACOS; then
+        # macOS: scan iCloud Obsidian directory
+        vaults=()
+        while IFS= read -r -d '' dir; do
+            name="$(basename "$dir")"
+            [[ "$name" == .* ]] && continue
+            vaults+=("$dir")
+        done < <(find "$ICLOUD_OBSIDIAN" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | sort -z)
 
-    if [ ${#vaults[@]} -eq 0 ]; then
-        fail "No vaults found in iCloud Obsidian directory"
-        echo ""
-        echo "  Fix: Open Obsidian → Create new vault → Storage: iCloud"
-        echo "  Then re-run this installer."
-        exit 1
-    elif [ ${#vaults[@]} -eq 1 ]; then
-        # Single vault — zero prompts
-        VAULT_DIR="${vaults[0]}"
-        ok "found vault: $(basename "$VAULT_DIR")"
+        if [ ${#vaults[@]} -eq 0 ]; then
+            fail "No vaults found in iCloud Obsidian directory"
+            echo ""
+            echo "  Fix: Open Obsidian → Create new vault → Storage: iCloud"
+            echo "  Then re-run this installer."
+            exit 1
+        elif [ ${#vaults[@]} -eq 1 ]; then
+            VAULT_DIR="${vaults[0]}"
+            ok "found vault: $(basename "$VAULT_DIR")"
+        else
+            echo "  Found ${#vaults[@]} vaults:"
+            echo ""
+            for i in "${!vaults[@]}"; do
+                local_name="$(basename "${vaults[$i]}")"
+                echo "    $((i + 1)). $local_name"
+            done
+            echo ""
+            read -r -p "  Choose vault [1-${#vaults[@]}]: " choice
+            if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#vaults[@]} ]; then
+                fail "Invalid choice: $choice"
+                exit 1
+            fi
+            VAULT_DIR="${vaults[$((choice - 1))]}"
+            ok "selected vault: $(basename "$VAULT_DIR")"
+        fi
     else
-        # Multiple vaults — numeric selection
-        echo "  Found ${#vaults[@]} vaults:"
+        # Linux: ask for vault path directly
+        echo "  Enter the path to your Obsidian vault directory."
         echo ""
-        for i in "${!vaults[@]}"; do
-            local_name="$(basename "${vaults[$i]}")"
-            echo "    $((i + 1)). $local_name"
-        done
-        echo ""
-        read -r -p "  Choose vault [1-${#vaults[@]}]: " choice
-        # Validate input
-        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#vaults[@]} ]; then
-            fail "Invalid choice: $choice"
+        read -r -p "  Vault path: " input_vault
+        VAULT_DIR="${input_vault/#\~/$HOME}"
+        if [ ! -d "$VAULT_DIR" ]; then
+            fail "Directory not found: $VAULT_DIR"
             exit 1
         fi
-        VAULT_DIR="${vaults[$((choice - 1))]}"
-        ok "selected vault: $(basename "$VAULT_DIR")"
+        ok "vault: $VAULT_DIR"
     fi
 fi
 
@@ -361,29 +380,40 @@ if [ "${_do_push:-0}" = "1" ]; then
 fi
 
 # =========================================================================
-# Phase 5: launchd daemon
+# Phase 5: sync daemon
 # =========================================================================
 phase 5 "Install sync daemon"
 
-mkdir -p "$LAUNCH_AGENTS_DIR"
+if $IS_MACOS; then
+    mkdir -p "$LAUNCH_AGENTS_DIR"
 
-if launchctl list 2>/dev/null | grep -q "com.zeromd.sync"; then
-    skip "launchd job already loaded"
+    if launchctl list 2>/dev/null | grep -q "com.zeromd.sync"; then
+        skip "launchd job already loaded"
+    else
+        # Generate plist from template
+        sed -e "s|__ZEROMD_SYNC_SCRIPT__|$SYNC_SCRIPT|g" \
+            -e "s|__ZEROMD_HOME__|$HOME|g" \
+            "$PLIST_TEMPLATE" > "$PLIST_TARGET"
+
+        # Add environment variables
+        /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$PLIST_TARGET" 2>/dev/null || true
+        /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:ZEROMD_VAULT_DIR '$VAULT_DIR'" "$PLIST_TARGET" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ZEROMD_VAULT_DIR string '$VAULT_DIR'" "$PLIST_TARGET"
+        /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:PATH string '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin'" "$PLIST_TARGET" 2>/dev/null || true
+
+        launchctl unload "$PLIST_TARGET" 2>/dev/null || true
+        launchctl load "$PLIST_TARGET"
+        ok "sync daemon installed (every 5 min)"
+    fi
 else
-    # Generate plist from template
-    sed -e "s|__ZEROMD_SYNC_SCRIPT__|$SYNC_SCRIPT|g" \
-        -e "s|__ZEROMD_HOME__|$HOME|g" \
-        "$PLIST_TEMPLATE" > "$PLIST_TARGET"
-
-    # Add environment variables
-    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$PLIST_TARGET" 2>/dev/null || true
-    /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:ZEROMD_VAULT_DIR '$VAULT_DIR'" "$PLIST_TARGET" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ZEROMD_VAULT_DIR string '$VAULT_DIR'" "$PLIST_TARGET"
-    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:PATH string '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin'" "$PLIST_TARGET" 2>/dev/null || true
-
-    launchctl unload "$PLIST_TARGET" 2>/dev/null || true
-    launchctl load "$PLIST_TARGET"
-    ok "sync daemon installed (every 5 min)"
+    # Linux: use cron
+    cron_line="*/5 * * * * ZEROMD_VAULT_DIR='$VAULT_DIR' bash '$SYNC_SCRIPT' >> '$STATE_DIR/sync.log' 2>&1"
+    if crontab -l 2>/dev/null | grep -qF "$SYNC_SCRIPT"; then
+        skip "cron job already installed"
+    else
+        ( crontab -l 2>/dev/null; echo "$cron_line" ) | crontab -
+        ok "cron job installed (every 5 min)"
+    fi
 fi
 
 # =========================================================================

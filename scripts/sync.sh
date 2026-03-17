@@ -58,8 +58,8 @@ find_vault() {
         fi
     fi
 
-    # 策略 3：自动扫描 iCloud 目录，找有 .git 的 vault
-    if [ -d "$ICLOUD_OBSIDIAN" ]; then
+    # 策略 3：自动扫描 iCloud 目录（仅 macOS），找有 .git 的 vault
+    if [ "$(uname -s)" = "Darwin" ] && [ -d "$ICLOUD_OBSIDIAN" ]; then
         for dir in "$ICLOUD_OBSIDIAN"/*/; do
             if [ -d "$dir/.git" ]; then
                 # 找到了，顺便更新配置文件，下次直接命中策略 2
