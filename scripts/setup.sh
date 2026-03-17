@@ -302,13 +302,50 @@ if [ "${_do_push:-0}" = "1" ]; then
         else
             fail "SSH authentication failed"
             echo ""
-            echo "  1. Check your SSH key is added to your Git server account"
+            echo "  Current remote: $remote_url"
             echo ""
-            echo "  2. Test manually:"
-            echo "     ssh -T git@$git_host"
+            echo "  Options:"
+            echo "    1. Change remote URL (switch to Gitee/GitLab/other)"
+            echo "    2. Exit and fix SSH manually"
             echo ""
-            echo "  Re-run this installer after fixing."
-            exit 1
+            read -r -p "  Choose [1/2]: " ssh_choice
+            if [ "${ssh_choice:-2}" = "1" ]; then
+                echo ""
+                echo "  Create a private repo on Gitee/GitLab/other, then paste its SSH URL."
+                echo ""
+                read -r -p "  New remote SSH URL (git@host:user/repo.git): " new_remote_url
+                if ! validate_git_ssh_url "$new_remote_url"; then
+                    fail "Invalid URL format: $new_remote_url"
+                    echo "  Expected: git@host:username/repo.git"
+                    exit 1
+                fi
+                git remote set-url origin "$new_remote_url"
+                ok "remote updated: $new_remote_url"
+                # Refresh variables for the push step below
+                remote_url="$new_remote_url"
+                git_host="$(get_git_host "$remote_url")"
+                # Re-test SSH with new host
+                echo -e "  ${DIM}Testing SSH connection to $git_host...${NC}"
+                ssh_output="$(ssh -T "git@$git_host" 2>&1 || true)"
+                if echo "$ssh_output" | grep -qi "successfully authenticated\|Hi \|欢迎"; then
+                    ok "SSH connection works"
+                else
+                    fail "SSH still failing for $git_host"
+                    echo ""
+                    echo "  Make sure your SSH public key is added to this Git server."
+                    echo "  Test manually: ssh -T git@$git_host"
+                    exit 1
+                fi
+            else
+                echo ""
+                echo "  1. Check your SSH key is added to your Git server account"
+                echo ""
+                echo "  2. Test manually:"
+                echo "     ssh -T git@$git_host"
+                echo ""
+                echo "  Re-run this installer after fixing."
+                exit 1
+            fi
         fi
     fi
 
