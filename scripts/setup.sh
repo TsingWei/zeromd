@@ -59,14 +59,20 @@ fail() {
 }
 
 # ---------- git remote helpers ----------
-validate_git_ssh_url() {
+validate_git_url() {
+    local url="$1"
+    [[ "$url" =~ ^git@[^:]+:[^[:space:]]+/.+\.git$ ]] || \
+    [[ "$url" =~ ^https?://[^[:space:]]+/.+\.git$ ]]
+}
+
+is_ssh_url() {
     local url="$1"
     [[ "$url" =~ ^git@[^:]+:[^[:space:]]+/.+\.git$ ]]
 }
 
 get_git_host() {
     local url="$1"
-    validate_git_ssh_url "$url" || return 1
+    is_ssh_url "$url" || return 1
     local no_prefix="${url#git@}"
     echo "${no_prefix%%:*}"
 }
@@ -245,13 +251,17 @@ else
         fi
         echo "  Create a private repo on your Git server (GitHub/GitLab/Gitea/Gitee)."
         echo ""
-        read -r -p "  Paste repo SSH URL (git@host:user/repo.git): " REMOTE_URL
+        echo "  Supported URL formats:"
+        echo "    SSH  : git@gitee.com:username/repo.git"
+        echo "    HTTPS: https://gitee.com/username/repo.git"
+        echo ""
+        read -r -p "  Paste repo URL: " REMOTE_URL
 
         # Validate URL format
-        if ! validate_git_ssh_url "$REMOTE_URL"; then
+        if ! validate_git_url "$REMOTE_URL"; then
             fail "Invalid URL format: $REMOTE_URL"
             echo ""
-            echo "  Expected format: git@host:username/repo.git"
+            echo "  Expected: git@host:username/repo.git  or  https://host/username/repo.git"
             exit 1
         fi
 
@@ -282,72 +292,62 @@ fi
 
 if [ "${_do_push:-0}" = "1" ]; then
     remote_url="$(git remote get-url origin 2>/dev/null || echo "")"
-    git_host="$(get_git_host "$remote_url" || true)"
-    if [ -z "$git_host" ]; then
-        fail "Cannot parse remote host from: $remote_url"
-        echo ""
-        echo "  Expected SSH format: git@host:username/repo.git"
-        exit 1
-    fi
 
-    # Test SSH connectivity first
-    echo -e "  ${DIM}Testing SSH connection to $git_host...${NC}"
-    if ssh -T "git@$git_host" 2>&1 | grep -qi "successfully authenticated"; then
-        ok "SSH connection works"
-    else
-        # ssh -T returns exit code 1 even on success, check stderr
-        ssh_output="$(ssh -T "git@$git_host" 2>&1 || true)"
-        if echo "$ssh_output" | grep -qi "successfully authenticated\|Hi "; then
-            ok "SSH connection works"
-        else
-            fail "SSH authentication failed"
-            echo ""
-            echo "  Current remote: $remote_url"
-            echo ""
-            echo "  Options:"
-            echo "    1. Change remote URL (switch to Gitee/GitLab/other)"
-            echo "    2. Exit and fix SSH manually"
-            echo ""
-            read -r -p "  Choose [1/2]: " ssh_choice
-            if [ "${ssh_choice:-2}" = "1" ]; then
-                echo ""
-                echo "  Create a private repo on Gitee/GitLab/other, then paste its SSH URL."
-                echo ""
-                read -r -p "  New remote SSH URL (git@host:user/repo.git): " new_remote_url
-                if ! validate_git_ssh_url "$new_remote_url"; then
-                    fail "Invalid URL format: $new_remote_url"
-                    echo "  Expected: git@host:username/repo.git"
-                    exit 1
-                fi
-                git remote set-url origin "$new_remote_url"
-                ok "remote updated: $new_remote_url"
-                # Refresh variables for the push step below
-                remote_url="$new_remote_url"
-                git_host="$(get_git_host "$remote_url")"
-                # Re-test SSH with new host
-                echo -e "  ${DIM}Testing SSH connection to $git_host...${NC}"
-                ssh_output="$(ssh -T "git@$git_host" 2>&1 || true)"
-                if echo "$ssh_output" | grep -qi "successfully authenticated\|Hi \|欢迎"; then
-                    ok "SSH connection works"
-                else
-                    fail "SSH still failing for $git_host"
-                    echo ""
-                    echo "  Make sure your SSH public key is added to this Git server."
-                    echo "  Test manually: ssh -T git@$git_host"
-                    exit 1
-                fi
+    _test_and_push() {
+        local url="$1"
+        if is_ssh_url "$url"; then
+            local git_host
+            git_host="$(get_git_host "$url")"
+            echo -e "  ${DIM}Testing SSH connection to $git_host...${NC}"
+            local ssh_output
+            ssh_output="$(ssh -T "git@$git_host" 2>&1 || true)"
+            if echo "$ssh_output" | grep -qi "successfully authenticated\|Hi \|欢迎"; then
+                ok "SSH connection works"
             else
+                fail "SSH authentication failed"
                 echo ""
-                echo "  1. Check your SSH key is added to your Git server account"
+                echo "  Current remote: $url"
                 echo ""
-                echo "  2. Test manually:"
-                echo "     ssh -T git@$git_host"
+                echo "  Options:"
+                echo "    1. Change remote URL (SSH or HTTPS)"
+                echo "    2. Exit and fix SSH manually"
                 echo ""
-                echo "  Re-run this installer after fixing."
-                exit 1
+                read -r -p "  Choose [1/2]: " ssh_choice
+                if [ "${ssh_choice:-2}" = "1" ]; then
+                    _prompt_new_remote
+                else
+                    echo ""
+                    echo "  Make sure your SSH public key is added to your Git server account."
+                    echo "  Test manually: ssh -T git@$git_host"
+                    echo ""
+                    echo "  Re-run this installer after fixing."
+                    exit 1
+                fi
             fi
+        else
+            ok "HTTPS remote, skipping SSH check"
         fi
-    fi
+    }
+
+    _prompt_new_remote() {
+        echo ""
+        echo "  Supported URL formats:"
+        echo "    SSH  : git@gitee.com:username/repo.git"
+        echo "    HTTPS: https://gitee.com/username/repo.git"
+        echo ""
+        read -r -p "  New remote URL: " new_remote_url
+        if ! validate_git_url "$new_remote_url"; then
+            fail "Invalid URL format: $new_remote_url"
+            echo "  Expected: git@host:username/repo.git  or  https://host/username/repo.git"
+            exit 1
+        fi
+        git remote set-url origin "$new_remote_url"
+        ok "remote updated: $new_remote_url"
+        remote_url="$new_remote_url"
+        _test_and_push "$remote_url"
+    }
+
+    _test_and_push "$remote_url"
 
     if git push -u origin main 2>/dev/null; then
         ok "pushed to remote"
