@@ -58,6 +58,19 @@ fail() {
     echo -e "  ${RED}✗${NC} $1"
 }
 
+# ---------- git remote helpers ----------
+validate_git_ssh_url() {
+    local url="$1"
+    [[ "$url" =~ ^git@[^:]+:[^[:space:]]+/.+\.git$ ]]
+}
+
+get_git_host() {
+    local url="$1"
+    validate_git_ssh_url "$url" || return 1
+    local no_prefix="${url#git@}"
+    echo "${no_prefix%%:*}"
+}
+
 # =========================================================================
 # Phase 0: Pre-flight
 # =========================================================================
@@ -82,8 +95,7 @@ else
     echo "  Generate one:"
     echo "    ssh-keygen -t ed25519 -C \"your-email@example.com\""
     echo ""
-    echo "  Add it to GitHub:"
-    echo "    https://github.com/settings/keys"
+    echo "  Add it to your Git server account (SSH keys page)."
     echo ""
     echo "  Then re-run this installer."
     exit 1
@@ -192,9 +204,9 @@ echo "$VAULT_DIR" > "$STATE_DIR/vault-path"
 export ZEROMD_VAULT_DIR="$VAULT_DIR"
 
 # =========================================================================
-# Phase 3: GitHub remote
+# Phase 3: Git remote
 # =========================================================================
-phase 3 "Connect to GitHub"
+phase 3 "Connect to Git remote"
 
 cd "$VAULT_DIR"
 
@@ -231,16 +243,15 @@ else
             echo "    Install: https://cli.github.com"
             echo ""
         fi
-        echo "  Create a private repo on GitHub:"
-        echo "    https://github.com/new"
+        echo "  Create a private repo on your Git server (GitHub/GitLab/Gitea/Gitee)."
         echo ""
-        read -r -p "  Paste repo SSH URL (git@github.com:user/repo.git): " REMOTE_URL
+        read -r -p "  Paste repo SSH URL (git@host:user/repo.git): " REMOTE_URL
 
         # Validate URL format
-        if [[ ! "$REMOTE_URL" =~ ^git@github\.com:.+/.+\.git$ ]]; then
+        if ! validate_git_ssh_url "$REMOTE_URL"; then
             fail "Invalid URL format: $REMOTE_URL"
             echo ""
-            echo "  Expected format: git@github.com:username/repo.git"
+            echo "  Expected format: git@host:username/repo.git"
             exit 1
         fi
 
@@ -270,23 +281,31 @@ else
 fi
 
 if [ "${_do_push:-0}" = "1" ]; then
+    remote_url="$(git remote get-url origin 2>/dev/null || echo "")"
+    git_host="$(get_git_host "$remote_url" || true)"
+    if [ -z "$git_host" ]; then
+        fail "Cannot parse remote host from: $remote_url"
+        echo ""
+        echo "  Expected SSH format: git@host:username/repo.git"
+        exit 1
+    fi
+
     # Test SSH connectivity first
-    echo -e "  ${DIM}Testing SSH connection to GitHub...${NC}"
-    if ssh -T git@github.com 2>&1 | grep -qi "successfully authenticated"; then
+    echo -e "  ${DIM}Testing SSH connection to $git_host...${NC}"
+    if ssh -T "git@$git_host" 2>&1 | grep -qi "successfully authenticated"; then
         ok "SSH connection works"
     else
         # ssh -T returns exit code 1 even on success, check stderr
-        ssh_output="$(ssh -T git@github.com 2>&1 || true)"
+        ssh_output="$(ssh -T "git@$git_host" 2>&1 || true)"
         if echo "$ssh_output" | grep -qi "successfully authenticated\|Hi "; then
             ok "SSH connection works"
         else
             fail "SSH authentication failed"
             echo ""
-            echo "  1. Check your SSH key is added to GitHub:"
-            echo "     https://github.com/settings/keys"
+            echo "  1. Check your SSH key is added to your Git server account"
             echo ""
             echo "  2. Test manually:"
-            echo "     ssh -T git@github.com"
+            echo "     ssh -T git@$git_host"
             echo ""
             echo "  Re-run this installer after fixing."
             exit 1
