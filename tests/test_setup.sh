@@ -165,20 +165,38 @@ test_zeromd_has_setup_cmd() {
 # ---------- URL validation ----------
 
 test_ssh_url_format_valid() {
-    local url="git@github.com:user/repo.git"
-    if [[ "$url" =~ ^git@github\.com:.+/.+\.git$ ]]; then
-        # pass
-        true
-    else
-        _CURRENT_TEST_FAILED=1
-        _ASSERT_MSGS+="    valid SSH URL should match pattern\n"
-    fi
+    local pattern='^git@[^:]+:[^[:space:]]+/.+\.git$'
+    local urls=(
+        "git@github.com:user/repo.git"
+        "git@gitlab.com:team/repo.git"
+        "git@gitee.com:user/repo.git"
+        "git@gitea.example.com:org/repo.git"
+        "git@10.0.0.8:infra/notes.git"
+    )
+
+    local url
+    for url in "${urls[@]}"; do
+        if [[ ! "$url" =~ $pattern ]]; then
+            _CURRENT_TEST_FAILED=1
+            _ASSERT_MSGS+="    valid SSH URL should match pattern: $url\n"
+        fi
+    done
 }
 
 test_ssh_url_format_invalid() {
-    local url="https://github.com/user/repo"
-    if [[ "$url" =~ ^git@github\.com:.+/.+\.git$ ]]; then
-        _CURRENT_TEST_FAILED=1
-        _ASSERT_MSGS+="    HTTPS URL should not match SSH pattern\n"
-    fi
+    local pattern='^git@[^:]+:[^[:space:]]+/.+\.git$'
+    local urls=(
+        "https://github.com/user/repo"
+        "git@github.com:user/repo"
+        "git@github.com:/repo.git"
+        "git@github.com:user/.git"
+    )
+
+    local url
+    for url in "${urls[@]}"; do
+        if [[ "$url" =~ $pattern ]]; then
+            _CURRENT_TEST_FAILED=1
+            _ASSERT_MSGS+="    invalid URL should not match SSH pattern: $url\n"
+        fi
+    done
 }
