@@ -68,6 +68,16 @@ fail() {
     echo -e "  ${RED}✗${NC} $1"
 }
 
+# ---------- path helpers ----------
+abs_path() {
+    local p="${1/#\~/$HOME}"
+    if [ -d "$p" ]; then
+        (cd "$p" && pwd)
+    else
+        echo "$p"
+    fi
+}
+
 # ---------- git remote helpers ----------
 validate_git_url() {
     local url="$1"
@@ -138,7 +148,7 @@ VAULT_DIR=""
 
 # Check if already configured and valid
 if [ -f "$STATE_DIR/vault-path" ]; then
-    saved="$(cat "$STATE_DIR/vault-path")"
+    saved="$(abs_path "$(cat "$STATE_DIR/vault-path")")"
     if [ -d "$saved" ]; then
         VAULT_DIR="$saved"
         skip "using configured vault: $(basename "$VAULT_DIR")"
@@ -185,7 +195,7 @@ if [ -z "$VAULT_DIR" ]; then
         echo "  Enter the path to your Obsidian vault directory."
         echo ""
         read -r -p "  Vault path: " input_vault
-        VAULT_DIR="${input_vault/#\~/$HOME}"
+        VAULT_DIR="$(abs_path "$input_vault")"
         if [ ! -d "$VAULT_DIR" ]; then
             fail "Directory not found: $VAULT_DIR"
             exit 1
@@ -225,6 +235,7 @@ fi
 
 # Save vault config
 mkdir -p "$STATE_DIR"
+VAULT_DIR="$(abs_path "$VAULT_DIR")"
 echo "$VAULT_DIR" > "$STATE_DIR/vault-path"
 export ZEROMD_VAULT_DIR="$VAULT_DIR"
 

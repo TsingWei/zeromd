@@ -50,9 +50,16 @@ find_vault() {
 
     # 策略 2：配置文件
     if [ -f "$STATE_DIR/vault-path" ]; then
-        local saved
-        saved="$(cat "$STATE_DIR/vault-path")"
+        local raw saved
+        raw="$(cat "$STATE_DIR/vault-path")"
+        saved="${raw/#\~/$HOME}"
+        # 相对路径转绝对路径
+        if [[ "$saved" != /* ]]; then
+            saved="$HOME/$saved"
+        fi
         if [ -d "$saved/.git" ]; then
+            # 顺便修正文件里的旧相对路径
+            echo "$saved" > "$STATE_DIR/vault-path"
             echo "$saved"
             return
         fi
@@ -62,9 +69,11 @@ find_vault() {
     if [ "$(uname -s)" = "Darwin" ] && [ -d "$ICLOUD_OBSIDIAN" ]; then
         for dir in "$ICLOUD_OBSIDIAN"/*/; do
             if [ -d "$dir/.git" ]; then
-                # 找到了，顺便更新配置文件，下次直接命中策略 2
-                echo "$dir" > "$STATE_DIR/vault-path"
-                echo "${dir%/}"
+                # 找到了，规范化为绝对路径，顺便更新配置文件，下次直接命中策略 2
+                local abs_dir
+                abs_dir="$(cd "$dir" && pwd)"
+                echo "$abs_dir" > "$STATE_DIR/vault-path"
+                echo "$abs_dir"
                 return
             fi
         done
